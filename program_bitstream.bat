@@ -15,7 +15,7 @@ rem ============================================================
 cd /d "%~dp0"
 
 set "BITFILE=%~1"
-if "%BITFILE%"=="" set "BITFILE=build_mem_viewer/LBTiny-MemViewer.runs/impl_1/lbtiny_mem_viewer_top.bit"
+if "%BITFILE%"=="" set "BITFILE=build/LBTiny-Bringup/LBTiny-Bringup.runs/impl_1/lbtiny_bringup_top.bit"
 
 if not exist "%BITFILE%" (
     echo ERROR: bitstream not found:

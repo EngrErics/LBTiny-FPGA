@@ -16,8 +16,17 @@ cd /d "%~dp0"
 
 set "TARGET=%~1"
 set "BOARD_SIZE=%~2"
-if "%TARGET%"==""     set "TARGET=bringup"
-if "%BOARD_SIZE%"=""  set "BOARD_SIZE=100T"
+if "%~1"=="" (
+    set "TARGET=bringup"
+) else (
+    set "TARGET=%~1"
+)
+
+if "%~2"=="" (
+    set "BOARD_SIZE=100T"
+) else (
+    set "BOARD_SIZE=%~2"
+)
 
 if /I "%TARGET%"=="bringup" (
     set "PROJ_NAME=LBTiny-Bringup"

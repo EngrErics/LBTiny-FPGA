@@ -60,13 +60,14 @@ module lbtiny_viewer (
     input  wire [7:0]  peek_data,
 
     // Bus master interface (connects to lbtiny_mem bus interface)
-    output reg  [3:0]  bus_A,
-    output reg         bus_ALE,
-    output reg         bus_RD_n,
-    output reg         bus_WR_n,
+    // Driven directly by lbtiny_bus_master submodule outputs — must be wire.
+    output wire [3:0]  bus_A,
+    output wire        bus_ALE,
+    output wire        bus_RD_n,
+    output wire        bus_WR_n,
     input  wire [7:0]  ad_in,
-    output reg  [7:0]  ad_out,
-    output reg         ad_oe,
+    output wire [7:0]  ad_out,
+    output wire        ad_oe,
 
     // Display
     output wire [15:0] LED,
@@ -154,22 +155,9 @@ module lbtiny_viewer (
     wire btnc_edge = btnc_stable & ~btnc_stable_q & ~btnu_stable;
     wire btnu_edge = btnu_stable & ~btnu_stable_q & ~btnc_stable;
 
-    // Sticky request flags: set on debounced rising edge, cleared by FSM in
-    // S_IDLE. Mutation requests are only latched when cpu_halted is high.
-    reg btnc_req, btnu_req;
-
-    initial begin btnc_req = 1'b0; btnu_req = 1'b0; end
-
-    always @(posedge clk_bus) begin
-        if (btnc_edge && cpu_halted) btnc_req <= 1'b1;
-        else if (btnc_req && state == S_IDLE) btnc_req <= 1'b0;
-
-        if (btnu_edge && cpu_halted) btnu_req <= 1'b1;
-        else if (btnu_req && state == S_IDLE) btnu_req <= 1'b0;
-    end
-
     //--------------------------------------------------------------------------
-    // Controller FSM
+    // Controller FSM — localparam and state declared here so the btnc_req/
+    // btnu_req always block below can legally reference state and S_IDLE.
     //--------------------------------------------------------------------------
     localparam [4:0]
         S_INIT_ERASE_NEXT = 5'd0,
@@ -184,6 +172,21 @@ module lbtiny_viewer (
         S_WAIT            = 5'd9;
 
     reg [4:0]  state, return_state;
+
+    // Sticky request flags: set on debounced rising edge, cleared by FSM in
+    // S_IDLE. Mutation requests are only latched when cpu_halted is high.
+    reg btnc_req, btnu_req;
+
+    initial begin btnc_req = 1'b0; btnu_req = 1'b0; end
+
+    always @(posedge clk_bus) begin
+        if (btnc_edge && cpu_halted) btnc_req <= 1'b1;
+        else if (btnc_req && state == S_IDLE) btnc_req <= 1'b0;
+
+        if (btnu_edge && cpu_halted) btnu_req <= 1'b1;
+        else if (btnu_req && state == S_IDLE) btnu_req <= 1'b0;
+    end
+
     reg [12:0] wait_count;
     reg [11:0] fill_addr;
     reg [2:0]  step;
