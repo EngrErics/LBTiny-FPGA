@@ -113,9 +113,10 @@ module lbtiny_top (
 
     //--------------------------------------------------------------------------
     // CPU bus signals
+    // cpu_AD is not declared separately — the CPU's AD inout connects directly
+    // to ad_bus so the CPU drives and reads the shared bus natively.
     //--------------------------------------------------------------------------
     wire [3:0] cpu_A;
-    wire [7:0] cpu_AD;
     wire       cpu_ALE;
     wire       cpu_RD_n;
     wire       cpu_WR_n;
@@ -141,10 +142,11 @@ module lbtiny_top (
     wire       mem_RD_n = cpu_halted ? viewer_bus_RD_n : cpu_RD_n;
     wire       mem_WR_n = cpu_halted ? viewer_bus_WR_n : cpu_WR_n;
 
-    // AD bus: viewer drives when ad_oe high and cpu_halted,
-    // CPU drives when running, otherwise tri-state.
-    wire [7:0] mem_ad_out = cpu_halted ? viewer_ad_out : cpu_AD;
-    wire       mem_ad_oe  = cpu_halted ? viewer_ad_oe  : 1'b1;
+    // AD bus: viewer drives when cpu_halted and viewer_ad_oe asserted.
+    // When CPU is running, the CPU drives AD directly through its inout port
+    // connected to ad_bus — mem_ad_oe must be 0 so the mux does not contend.
+    wire [7:0] mem_ad_out = viewer_ad_out;
+    wire       mem_ad_oe  = cpu_halted & viewer_ad_oe;
 
     //--------------------------------------------------------------------------
     // Memory AD wire
@@ -180,7 +182,7 @@ module lbtiny_top (
         .CLK     (clk_bus),
         .RESET_n (cpu_reset_n),
         .A       (cpu_A),
-        .AD      (cpu_AD),
+        .AD      (ad_bus),
         .ALE     (cpu_ALE),
         .RD_n    (cpu_RD_n),
         .WR_n    (cpu_WR_n),
