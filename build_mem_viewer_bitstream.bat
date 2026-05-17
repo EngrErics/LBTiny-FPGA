@@ -2,11 +2,11 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 rem ============================================================
-rem Build Vivado bitstream for LBTiny-MemBus / Nexys A7
+rem Build standalone memory-viewer bitstream for LBTiny-MemBus / Nexys A7
 rem Usage:
-rem   build_bitstream.bat        rem Nexys A7-100T default
-rem   build_bitstream.bat 50T    rem Nexys A7-50T
-rem   build_bitstream.bat 100T   rem Nexys A7-100T
+rem   build_mem_viewer_bitstream.bat        rem Nexys A7-100T default
+rem   build_mem_viewer_bitstream.bat 50T    rem Nexys A7-50T
+rem   build_mem_viewer_bitstream.bat 100T   rem Nexys A7-100T
 rem ============================================================
 
 cd /d "%~dp0"
@@ -76,20 +76,36 @@ echo Using Vivado from PATH.
 echo Target FPGA part: %FPGA_PART%
 echo.
 
-if not exist "vivado_build.tcl" (
-    echo ERROR: vivado_build.tcl not found in project root.
+if not exist "vivado_build_mem_viewer.tcl" (
+    echo ERROR: vivado_build_mem_viewer.tcl not found in project root.
+    exit /b 1
+)
+if not exist "src\lbtiny_bus_slave.v" (
+    echo ERROR: expected src\lbtiny_bus_slave.v not found.
+    exit /b 1
+)
+if not exist "src\lbtiny_mem_viewer_top.v" (
+    echo ERROR: expected src\lbtiny_mem_viewer_top.v not found.
+    exit /b 1
+)
+if not exist "src\lbtiny_mem_viewer.xdc" (
+    echo ERROR: expected src\lbtiny_mem_viewer.xdc not found.
+    exit /b 1
+)
+if not exist "src\rom_init.mem" (
+    echo ERROR: expected src\rom_init.mem not found.
     exit /b 1
 )
 
-vivado -mode batch -source vivado_build.tcl -tclargs "%FPGA_PART%"
+vivado -mode batch -source vivado_build_mem_viewer.tcl -tclargs "%FPGA_PART%"
 if errorlevel 1 (
     echo.
-    echo ERROR: Vivado build failed.
+    echo ERROR: Vivado build failed. Check build_mem_viewer\vivado.log and build_mem_viewer\vivado.jou.
     exit /b 1
 )
 
 echo.
 echo Build complete.
 echo Bitstream should be under:
-echo   build\LBTiny-MemBus.runs\impl_1\lbtiny_top.bit
+echo   build_mem_viewer\LBTiny-MemViewer.runs\impl_1\lbtiny_mem_viewer_top.bit
 exit /b 0

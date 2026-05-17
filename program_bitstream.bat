@@ -2,29 +2,36 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 rem ============================================================
-rem Build Vivado bitstream for LBTiny-MemBus / Nexys A7
+rem Program LBTiny-MemBus bitstream to a Digilent Nexys A7 via USB-JTAG
+rem
 rem Usage:
-rem   build_bitstream.bat        rem Nexys A7-100T default
-rem   build_bitstream.bat 50T    rem Nexys A7-50T
-rem   build_bitstream.bat 100T   rem Nexys A7-100T
+rem   program_bitstream.bat
+rem   program_bitstream.bat path\to\some.bit
+rem
+rem Default bitstream:
+rem   build\LBTiny-MemBus.runs\impl_1\lbtiny_top.bit
 rem ============================================================
 
 cd /d "%~dp0"
 
-set "BOARD_SIZE=%~1"
-if "%BOARD_SIZE%"=="" set "BOARD_SIZE=100T"
+set "BITFILE=%~1"
+if "%BITFILE%"=="" set "BITFILE=build_mem_viewer/LBTiny-MemViewer.runs/impl_1/lbtiny_mem_viewer_top.bit"
 
-if /I "%BOARD_SIZE%"=="50T" (
-    set "FPGA_PART=xc7a50tcsg324-1"
-) else if /I "%BOARD_SIZE%"=="100T" (
-    set "FPGA_PART=xc7a100tcsg324-1"
-) else (
-    echo ERROR: Unknown board size "%BOARD_SIZE%".
-    echo Use either:
-    echo   %~nx0 50T
-    echo   %~nx0 100T
+if not exist "%BITFILE%" (
+    echo ERROR: bitstream not found:
+    echo   %BITFILE%
+    echo.
+    echo Build it first with:
+    echo   build_bitstream.bat
     exit /b 1
 )
+
+if not exist "program_bitstream.tcl" (
+    echo ERROR: program_bitstream.tcl not found in project root.
+    exit /b 1
+)
+
+if not exist "build" mkdir "build"
 
 rem If Vivado is already available, use it.
 where vivado.exe >nul 2>nul
@@ -68,28 +75,23 @@ echo Option 2: set XILINX_VIVADO in PowerShell, for example:
 echo   $env:XILINX_VIVADO = "C:\Xilinx\Vivado\2024.2"
 echo   .\%~nx0
 echo.
-echo If your Vivado is installed somewhere else, replace the path above.
 exit /b 1
 
 :vivado_found
 echo Using Vivado from PATH.
-echo Target FPGA part: %FPGA_PART%
+echo Bitstream: %BITFILE%
+echo.
+echo Make sure the Nexys A7 is powered on and connected through the PROG USB-JTAG port.
 echo.
 
-if not exist "vivado_build.tcl" (
-    echo ERROR: vivado_build.tcl not found in project root.
-    exit /b 1
-)
-
-vivado -mode batch -source vivado_build.tcl -tclargs "%FPGA_PART%"
+call vivado -mode batch -log "build\program_bitstream.log" -journal "build\program_bitstream.jou" -source program_bitstream.tcl -tclargs "%BITFILE%"
 if errorlevel 1 (
     echo.
-    echo ERROR: Vivado build failed.
+    echo ERROR: FPGA programming failed.
+    echo See build\program_bitstream.log for details.
     exit /b 1
 )
 
 echo.
-echo Build complete.
-echo Bitstream should be under:
-echo   build\LBTiny-MemBus.runs\impl_1\lbtiny_top.bit
+echo FPGA programming complete.
 exit /b 0
