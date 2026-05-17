@@ -1,63 +1,71 @@
 //==============================================================================
-// lbtiny_bus_slave.v
+// lbtiny_mem.v
 //------------------------------------------------------------------------------
-// Bus slave subsystem for the LBTiny 8-bit CPU.
+// Memory subsystem for the LBTiny 8-bit CPU.
 //
 // Mirrors the external memory hardware on the reference board:
 //   - 3 KB ROM   at 0x000-0xBFF  (BRAM, emulates SST39VF010A NOR flash)
-//   - 768 B SRAM at 0xC00-0xEFF  (BRAM, emulates AS6C6264 SRAM)
+//   - 768 B RAM  at 0xC00-0xEFF  (BRAM, emulates AS6C6264 SRAM)
 //   - 256 B MMIO at 0xF00-0xFFF  (stub: reads 0x00, writes ignored)
 //
-// Listens on the 8085/8051-style multiplexed address/data bus driven either
-// by the CPU (normal operation) or by the STM32 supervisor (bus-mastery during
-// RESET_n low, used for flash programming).
+// Bus interface:
+//   Listens on the 8085/8051-style multiplexed address/data bus driven either
+//   by the CPU (normal operation) or by the STM32 supervisor (bus-mastery
+//   during RESET_n low, used for flash programming).
 //
-// Target: Xilinx Artix-7 (Nexys A7), 4 MHz CLK input.
+// Peek interface:
+//   A second read-only port exposing BRAM contents directly, independent of
+//   the bus. The viewer uses this for live observation without bus transactions.
+//   peek_addr selects the address; peek_data is registered one cycle later.
+//   MMIO range (0xF00-0xFFF) returns 0x00 via the peek port.
+//   The peek port is always active regardless of RESET_n or bus activity.
 //
-// 2026-05-16 revision:
-//   The ROM and RAM arrays are now described with a Xilinx-friendly simple
-//   dual-port BRAM inference template:
-//     - One always block per memory, no reset on the memory itself.
-//     - Read port and write port use independent address signals but live in
-//       the same clocked block.
-//     - Synchronous output register on the read port, also reset-free.
-//   The flash command state machine is in a separate always block (with a
-//   reset) that produces the write-port enable/address/data combinationally
-//   from its registered state. This pattern is recognized by Vivado as
-//   RAM_STYLE = block, while still being functionally identical to the prior
-//   version. The flash command protocol (AA/55/A0 program, AA/55/80/AA/55/30
-//   erase) is unchanged.
+// Target: Xilinx Artix-7 (Nexys A7).
+// Bus clock: ~3.846 MHz (100 MHz / 26).
+//
+// BRAM inference rules (Vivado):
+//   - One always @(posedge CLK) block per memory, NO reset on the array.
+//   - Independent read and write address ports in the same clocked block.
+//   - Synchronous output register on every read port, also reset-free.
+//   - (* ram_style = "block" *) forces BRAM; Vivado errors rather than
+//     silently falling back to LUTs if inference fails.
+//   - The peek ports share the same BRAM array as the bus read port, making
+//     each memory a true dual-port BRAM (one write port, two read ports).
+//     Vivado infers TDP BRAM automatically from this pattern.
 //==============================================================================
 
 `timescale 1ns/1ps
 `default_nettype none
 
-module lbtiny_bus_slave (
-    input  wire       CLK,       // 4 MHz system clock
-    input  wire       RESET_n,   // Active-low reset (from supervisor or CPU)
-    input  wire [3:0] A,         // A[11:8] upper address nibble
-    inout  wire [7:0] AD,        // Multiplexed address[7:0] / data bus
-    input  wire       ALE,       // Address latch enable
-    input  wire       RD_n,      // Active-low read strobe
-    input  wire       WR_n       // Active-low write strobe
+module lbtiny_mem (
+    input  wire        CLK,        // Bus clock (~3.846 MHz)
+    input  wire        RESET_n,    // Active-low reset (clears control state only)
+
+    // Bus interface (8085/8051-style multiplexed address/data)
+    input  wire [3:0]  A,          // A[11:8] upper address nibble
+    inout  wire [7:0]  AD,         // Multiplexed address[7:0] / data bus
+    input  wire        ALE,        // Address latch enable
+    input  wire        RD_n,       // Active-low read strobe
+    input  wire        WR_n,       // Active-low write strobe
+
+    // Peek interface (read-only, always live, no bus transaction required)
+    input  wire [11:0] peek_addr,  // Address to observe
+    output reg  [7:0]  peek_data   // Data at peek_addr, registered one cycle
 );
 
     //--------------------------------------------------------------------------
     // 1. Address latch (mirrors the external 74HC573)
     //--------------------------------------------------------------------------
-    // Transparent-while-ALE-high latch: AD[7:0] is captured every cycle ALE is
-    // high, and held when ALE goes low. Functionally equivalent to a 74HC573.
+    // Transparent-while-ALE-high latch: AD[7:0] is captured every cycle ALE
+    // is high and held when ALE goes low. Functionally equivalent to 74HC573.
 
     reg [7:0] ad_low_latched;
 
     always @(posedge CLK or negedge RESET_n) begin
-        if (!RESET_n) begin
+        if (!RESET_n)
             ad_low_latched <= 8'h00;
-        end else begin
-            if (ALE) begin
-                ad_low_latched <= AD;
-            end
-        end
+        else if (ALE)
+            ad_low_latched <= AD;
     end
 
     wire [11:0] addr = {A, ad_low_latched};
@@ -70,10 +78,9 @@ module lbtiny_bus_slave (
     wire cs_mmio = (addr >= 12'hF00);
 
     //--------------------------------------------------------------------------
-    // 3. Strobe edge detection
+    // 3. Write strobe edge detection
     //--------------------------------------------------------------------------
-    // Writes commit on the rising edge of WR_n. Reads are level-sensitive and
-    // drive AD[7:0] whenever RD_n is low and the address is in our range.
+    // Writes commit on the rising edge of WR_n (de-assertion).
 
     reg wr_n_q;
     always @(posedge CLK or negedge RESET_n) begin
@@ -87,27 +94,26 @@ module lbtiny_bus_slave (
     wire [7:0] write_data = AD;
 
     //--------------------------------------------------------------------------
-    // 4. SST39VF010A-style flash command state machine
+    // 4. SST39VF010A-style flash command FSM
     //--------------------------------------------------------------------------
-    // Program: AA@555, 55@2AA, A0@555, <data>@<addr>
-    // Erase  : AA@555, 55@2AA, 80@555, AA@555, 55@2AA, 30@<any addr in sector>
-    // Bare writes outside a valid sequence are silently dropped.
+    // Program : AA@555, 55@2AA, A0@555, <data>@<addr>
+    // Erase   : AA@555, 55@2AA, 80@555, AA@555, 55@2AA, 30@<any ROM addr>
+    // Any write outside a valid sequence is silently dropped.
 
     localparam [3:0]
-        S_IDLE     = 4'd0,
-        S_UNLOCK1  = 4'd1,
-        S_UNLOCK2  = 4'd2,
-        S_PROGRAM  = 4'd3,
-        S_ERASE1   = 4'd4,
-        S_ERASE2   = 4'd5,
-        S_ERASE3   = 4'd6;
+        S_IDLE    = 4'd0,
+        S_UNLOCK1 = 4'd1,
+        S_UNLOCK2 = 4'd2,
+        S_PROGRAM = 4'd3,
+        S_ERASE1  = 4'd4,
+        S_ERASE2  = 4'd5,
+        S_ERASE3  = 4'd6;
 
     reg [3:0] flash_state;
 
     wire cmd_addr_555 = (addr == 12'h555);
     wire cmd_addr_2AA = (addr == 12'h2AA);
 
-    // Registered outputs that drive the ROM write port from the program path.
     reg        rom_program_we;
     reg [11:0] rom_program_addr;
     reg [7:0]  rom_program_data;
@@ -130,14 +136,12 @@ module lbtiny_bus_slave (
                         if (cs_rom && cmd_addr_555 && write_data == 8'hAA)
                             flash_state <= S_UNLOCK1;
                     end
-
                     S_UNLOCK1: begin
                         if (cs_rom && cmd_addr_2AA && write_data == 8'h55)
                             flash_state <= S_UNLOCK2;
                         else
                             flash_state <= S_IDLE;
                     end
-
                     S_UNLOCK2: begin
                         if (cs_rom && cmd_addr_555 && write_data == 8'hA0)
                             flash_state <= S_PROGRAM;
@@ -146,10 +150,7 @@ module lbtiny_bus_slave (
                         else
                             flash_state <= S_IDLE;
                     end
-
                     S_PROGRAM: begin
-                        // Fourth write: program the byte. Only addresses inside
-                        // the ROM range are honored.
                         if (cs_rom) begin
                             rom_program_we   <= 1'b1;
                             rom_program_addr <= addr;
@@ -157,27 +158,23 @@ module lbtiny_bus_slave (
                         end
                         flash_state <= S_IDLE;
                     end
-
                     S_ERASE1: begin
                         if (cs_rom && cmd_addr_555 && write_data == 8'hAA)
                             flash_state <= S_ERASE2;
                         else
                             flash_state <= S_IDLE;
                     end
-
                     S_ERASE2: begin
                         if (cs_rom && cmd_addr_2AA && write_data == 8'h55)
                             flash_state <= S_ERASE3;
                         else
                             flash_state <= S_IDLE;
                     end
-
                     S_ERASE3: begin
                         if (cs_rom && write_data == 8'h30)
                             rom_erase_start <= 1'b1;
                         flash_state <= S_IDLE;
                     end
-
                     default: flash_state <= S_IDLE;
                 endcase
             end
@@ -187,8 +184,8 @@ module lbtiny_bus_slave (
     //--------------------------------------------------------------------------
     // 5. ROM erase walker
     //--------------------------------------------------------------------------
-    // Walks the ROM region writing 0xFF. Kept in its own always block so the
-    // BRAM block-RAM template below stays clean (no reset, single write port).
+    // Walks 0x000-0xBFF writing 0xFF, one byte per CLK. Takes 3072 cycles
+    // (~800 µs at 3.846 MHz). Kept separate so the BRAM block stays clean.
 
     reg        erasing;
     reg [11:0] erase_idx;
@@ -212,25 +209,22 @@ module lbtiny_bus_slave (
     //--------------------------------------------------------------------------
     // 6. ROM write-port mux
     //--------------------------------------------------------------------------
-    // Combine the erase and program write streams into one set of port signals
-    // that the BRAM block can consume directly. If both fire on the same cycle
-    // (the FSM guarantees they don't), erase wins.
+    // Combines erase walker and byte-program streams. Erase wins if both fire
+    // simultaneously (the FSM guarantees this cannot happen in practice).
 
     wire        rom_we    = erasing | rom_program_we;
-    wire [11:0] rom_waddr = erasing ? erase_idx : rom_program_addr;
-    wire [7:0]  rom_wdata = erasing ? 8'hFF     : rom_program_data;
+    wire [11:0] rom_waddr = erasing ? erase_idx       : rom_program_addr;
+    wire [7:0]  rom_wdata = erasing ? 8'hFF           : rom_program_data;
 
     //--------------------------------------------------------------------------
-    // 7. ROM BRAM (mirrors SST39VF010A)
+    // 7. ROM BRAM — true dual-port (one write, two read: bus + peek)
     //--------------------------------------------------------------------------
-    // Simple dual-port template recognized by Vivado as RAM_STYLE = block:
-    //   - One clocked always block, no reset.
-    //   - Independent read/write addresses.
-    //   - Synchronous output register rom_rdata, also reset-free.
-    //   - Initial contents from $readmemh (becomes the BRAM INIT_xx attrs).
+    // Vivado infers TDP BRAM from two independent read addresses in one always
+    // block sharing the array with a write port. No reset on any port.
 
     (* ram_style = "block" *) reg [7:0] rom_mem [0:4095];
-    reg [7:0] rom_rdata;
+    reg [7:0] rom_rdata;       // bus read port output
+    reg [7:0] rom_peek_rdata;  // peek read port output
 
     integer i;
     initial begin
@@ -241,20 +235,21 @@ module lbtiny_bus_slave (
     always @(posedge CLK) begin
         if (rom_we)
             rom_mem[rom_waddr] <= rom_wdata;
-        rom_rdata <= rom_mem[addr];
+        rom_rdata      <= rom_mem[addr];
+        rom_peek_rdata <= rom_mem[peek_addr];
     end
 
     //--------------------------------------------------------------------------
-    // 8. RAM BRAM (mirrors AS6C6264 SRAM)
+    // 8. RAM BRAM — true dual-port (one write, two read: bus + peek)
     //--------------------------------------------------------------------------
-    // 768 bytes at 0xC00..0xEFF. Allocated as 1024 entries (next power of two)
-    // for clean BRAM inference.
+    // 768 bytes at 0xC00-0xEFF, allocated as 1024 entries for BRAM inference.
 
     (* ram_style = "block" *) reg [7:0] ram_mem [0:1023];
-    reg [7:0] ram_rdata;
+    reg [7:0] ram_rdata;       // bus read port output
+    reg [7:0] ram_peek_rdata;  // peek read port output
 
-    wire [11:0] ram_offset_full = addr - 12'hC00;
-    wire [9:0]  ram_offset      = ram_offset_full[9:0];
+    wire [9:0] ram_offset      = addr[9:0];
+    wire [9:0] ram_peek_offset = peek_addr[9:0];
 
     integer j;
     initial begin
@@ -264,7 +259,8 @@ module lbtiny_bus_slave (
     always @(posedge CLK) begin
         if (cs_ram && write_pulse)
             ram_mem[ram_offset] <= write_data;
-        ram_rdata <= ram_mem[ram_offset];
+        ram_rdata      <= ram_mem[ram_offset];
+        ram_peek_rdata <= ram_mem[ram_peek_offset];
     end
 
     //--------------------------------------------------------------------------
@@ -273,10 +269,10 @@ module lbtiny_bus_slave (
     wire [7:0] mmio_rdata = 8'h00;
 
     //--------------------------------------------------------------------------
-    // 10. Read data mux
+    // 10. Bus read data mux
     //--------------------------------------------------------------------------
-    // Both rom_rdata and ram_rdata are registered (synchronous BRAM read), so
-    // we register the chip selects to keep the mux output aligned.
+    // Chip selects are registered one cycle to align with the synchronous BRAM
+    // read output register.
 
     reg cs_rom_q, cs_ram_q, cs_mmio_q;
     always @(posedge CLK) begin
@@ -294,10 +290,31 @@ module lbtiny_bus_slave (
     end
 
     //--------------------------------------------------------------------------
-    // 11. Bus tristate control
+    // 11. Bus tristate drive
     //--------------------------------------------------------------------------
     wire drive_en = (RD_n == 1'b0) && (cs_rom_q || cs_ram_q || cs_mmio_q);
     assign AD = drive_en ? rdata : 8'bz;
+
+    //--------------------------------------------------------------------------
+    // 12. Peek output mux
+    //--------------------------------------------------------------------------
+    // Registered one cycle after peek_addr is presented, matching BRAM latency.
+    // peek_addr decode is combinational; the mux result is registered here so
+    // the output is always from a single flip-flop with no long combinational
+    // path after the BRAM output register.
+
+    reg peek_cs_rom_q, peek_cs_ram_q;
+
+    always @(posedge CLK) begin
+        peek_cs_rom_q <= (peek_addr <= 12'hBFF);
+        peek_cs_ram_q <= (peek_addr >= 12'hC00) && (peek_addr <= 12'hEFF);
+    end
+
+    always @(posedge CLK) begin
+        if      (peek_cs_rom_q) peek_data <= rom_peek_rdata;
+        else if (peek_cs_ram_q) peek_data <= ram_peek_rdata;
+        else                    peek_data <= 8'h00;
+    end
 
 endmodule
 
