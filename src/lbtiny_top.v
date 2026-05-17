@@ -106,37 +106,16 @@ module lbtiny_top (
     // stm32_reset_n: Pmod JA pin 10, active low (STM32 pulls low to take bus)
     // sw15_q2:       SW15 up = halt CPU (active high)
     // cpu_reset_n:   low when either source requests halt
-    //
-    // mem_reset_n is a separate power-on reset for lbtiny_mem. The memory
-    // subsystem must stay out of reset whenever the CPU is halted, because
-    // that is precisely when the viewer wants to write to it via the bus
-    // master. Holding the memory in reset would clear the flash command FSM
-    // and silently drop every write.
     //--------------------------------------------------------------------------
     wire stm32_reset_n = JA_CTL[10];
     wire cpu_reset_n   = stm32_reset_n & ~sw15_q2;
     wire cpu_halted    = ~cpu_reset_n;
 
-    // Power-on reset for the memory subsystem: hold low for 40 bus clocks
-    // after configuration, then release forever.
-    reg       mem_reset_n;
-    reg [5:0] mem_reset_count;
-    initial begin mem_reset_n = 1'b0; mem_reset_count = 6'd0; end
-
-    always @(posedge clk_bus) begin
-        if (!mem_reset_n) begin
-            mem_reset_count <= mem_reset_count + 6'd1;
-            if (mem_reset_count == 6'd40)
-                mem_reset_n <= 1'b1;
-        end
-    end
-
     //--------------------------------------------------------------------------
     // CPU bus signals
-    // cpu_AD is not declared separately — the CPU's AD inout connects directly
-    // to ad_bus so the CPU drives and reads the shared bus natively.
     //--------------------------------------------------------------------------
     wire [3:0] cpu_A;
+    wire [7:0] cpu_AD;
     wire       cpu_ALE;
     wire       cpu_RD_n;
     wire       cpu_WR_n;
@@ -152,24 +131,50 @@ module lbtiny_top (
     wire       viewer_ad_oe;
 
     //--------------------------------------------------------------------------
-    // Bus mux: viewer drives when cpu_halted, CPU drives when running.
-    // The STM32 drives the Pmod pins externally when it takes the bus
-    // (also during cpu_halted). SW15 and STM32 must not be used simultaneously
-    // — this is a procedural constraint, not enforced in hardware.
+    // STM32 Pmod bus signals (inputs from JA when STM32 owns the bus)
     //--------------------------------------------------------------------------
-    wire [3:0] mem_A   = cpu_halted ? viewer_bus_A   : cpu_A;
-    wire       mem_ALE = cpu_halted ? viewer_bus_ALE  : cpu_ALE;
-    wire       mem_RD_n = cpu_halted ? viewer_bus_RD_n : cpu_RD_n;
-    wire       mem_WR_n = cpu_halted ? viewer_bus_WR_n : cpu_WR_n;
+    // stm32_reset_n=0  =>  STM32 has pulled RESET_n low and is bus master.
+    // JA_AB[4:1] carry A[11:8]; JA_CTL[7:9] carry ALE / RD_n / WR_n.
+    wire stm32_owns  = ~stm32_reset_n;
 
-    // AD bus: viewer drives when cpu_halted and viewer_ad_oe asserted.
-    // When CPU is running, the CPU drives AD directly through its inout port
-    // connected to ad_bus — mem_ad_oe must be 0 so the mux does not contend.
-    wire [7:0] mem_ad_out = viewer_ad_out;
-    wire       mem_ad_oe  = cpu_halted & viewer_ad_oe;
+    wire [3:0] stm32_A    = {JA_AB[4],  JA_AB[3],  JA_AB[2],  JA_AB[1]};
+    wire       stm32_ALE  = JA_CTL[7];
+    wire       stm32_RD_n = JA_CTL[8];
+    wire       stm32_WR_n = JA_CTL[9];
 
     //--------------------------------------------------------------------------
-    // Memory AD wire
+    // Bus mux — three-way:
+    //   STM32 owns  (stm32_reset_n=0) : Pmod JA drives lbtiny_mem
+    //   SW15 halt   (sw15_q2=1)       : viewer FSM drives lbtiny_mem
+    //   CPU running (cpu_reset_n=1)   : CPU drives lbtiny_mem
+    //
+    // STM32 takes priority over viewer when both halt sources are active
+    // (operator error, but we fail safe rather than fight over the bus).
+    //--------------------------------------------------------------------------
+    wire [3:0] mem_A    = stm32_owns ? stm32_A        :
+                          cpu_halted ? viewer_bus_A    : cpu_A;
+    wire       mem_ALE  = stm32_owns ? stm32_ALE       :
+                          cpu_halted ? viewer_bus_ALE  : cpu_ALE;
+    wire       mem_RD_n = stm32_owns ? stm32_RD_n      :
+                          cpu_halted ? viewer_bus_RD_n : cpu_RD_n;
+    wire       mem_WR_n = stm32_owns ? stm32_WR_n      :
+                          cpu_halted ? viewer_bus_WR_n : cpu_WR_n;
+
+    // AD bus drive mux:
+    //   STM32 owns  -> release ad_bus from the FPGA side (STM32 drives JB
+    //                  externally on writes; lbtiny_mem drives back on reads)
+    //   viewer owns -> viewer_ad_out when viewer_ad_oe asserted, else Z
+    //   CPU runs    -> CPU drives AD (cpu_AD is an inout driven by u_cpu)
+    wire [7:0] mem_ad_out = cpu_halted ? viewer_ad_out : cpu_AD;
+    wire       mem_ad_oe  = stm32_owns ? 1'b0          :
+                            cpu_halted ? viewer_ad_oe   : 1'b1;
+
+    //--------------------------------------------------------------------------
+    // Memory AD wire — shared by lbtiny_mem, viewer/CPU, and Pmod JB.
+    // When mem_ad_oe=1 the FPGA side drives (viewer write or CPU).
+    // When mem_ad_oe=0 the FPGA side releases; either the STM32 drives JB
+    // from outside (write phase) or lbtiny_mem's own tristate responds
+    // (read data phase, same regardless of which master issued the read).
     //--------------------------------------------------------------------------
     wire [7:0] ad_bus;
     assign ad_bus = mem_ad_oe ? mem_ad_out : 8'hzz;
@@ -185,7 +190,7 @@ module lbtiny_top (
     //--------------------------------------------------------------------------
     lbtiny_mem u_mem (
         .CLK      (clk_bus),
-        .RESET_n  (mem_reset_n),
+        .RESET_n  (cpu_reset_n),
         .A        (mem_A),
         .AD       (ad_bus),
         .ALE      (mem_ALE),
@@ -202,7 +207,7 @@ module lbtiny_top (
         .CLK     (clk_bus),
         .RESET_n (cpu_reset_n),
         .A       (cpu_A),
-        .AD      (ad_bus),
+        .AD      (cpu_AD),
         .ALE     (cpu_ALE),
         .RD_n    (cpu_RD_n),
         .WR_n    (cpu_WR_n),
@@ -257,28 +262,40 @@ module lbtiny_top (
     assign LED[15]   = cpu_halted;
 
     //--------------------------------------------------------------------------
-    // Pmod JA/JB: exposed for STM32 supervisor bus access.
-    // When the STM32 takes the bus (cpu_reset_n low, driven externally),
-    // it drives JA_AB, JA_CTL[7:9], and JB_AD bidirectionally.
-    // These ports are declared as inputs/inout in the module boundary;
-    // the STM32 is the external driver. The CPU is held in reset during this.
+    // Pmod JA/JB — live connection to lbtiny_mem via ad_bus
     //--------------------------------------------------------------------------
-    // JA pins are input-only from FPGA perspective (STM32 drives them).
-    // JB pins are bidirectional but are only driven by the STM32 externally;
-    // they are left undriven here (the memory's internal AD bus is separate).
-    // These ports exist purely to satisfy the XDC pin constraints and reserve
-    // the physical pins for the reference board harness.
+    // JA pins (A[11:8], ALE, RD_n, WR_n, RESET_n) are pure inputs to the
+    // FPGA; they are consumed by the bus mux above and by the reset logic.
+    // No assign needed — the wires stm32_A/ALE/RD_n/WR_n already reference
+    // JA_AB and JA_CTL directly.  Suppress the unused-input lint warning for
+    // the one bit already consumed (JA_CTL[10] = stm32_reset_n).
+    //
+    // JB pins (AD[7:0]) are bidirectional.  They are tied directly to ad_bus
+    // so that:
+    //   - lbtiny_mem can drive read data out through JB to the STM32
+    //   - the STM32 can drive write data in through JB to lbtiny_mem
+    //   - the viewer and CPU use ad_bus internally (same net)
+    //
+    // Bit mapping (matches XDC and firmware):
+    //   JB pin 1  (JB_AD_LO[1]) = AD[0]    JB pin 7  (JB_AD_HI[7])  = AD[4]
+    //   JB pin 2  (JB_AD_LO[2]) = AD[1]    JB pin 8  (JB_AD_HI[8])  = AD[5]
+    //   JB pin 3  (JB_AD_LO[3]) = AD[2]    JB pin 9  (JB_AD_HI[9])  = AD[6]
+    //   JB pin 4  (JB_AD_LO[4]) = AD[3]    JB pin 10 (JB_AD_HI[10]) = AD[7]
 
-    // Suppress unused-input warnings for Pmod ports not yet connected to logic.
-    wire [3:0]  ja_ab_unused  = JA_AB;
-    wire [10:7] ja_ctl_unused = JA_CTL;   // [10] consumed above as stm32_reset_n
-
-    // JB bidirectional pins are reserved for the reference board.
-    // In this FPGA-only build, external bus access from the STM32 goes through
-    // Pmod JB but the internal logic uses ad_bus instead. Connecting them
-    // requires a physical wire harness on the board; leave as stubs for now.
-    assign JB_AD_LO = 4'bz;
-    assign JB_AD_HI = 4'bz;
+    // Connect JB to ad_bus.  Each inout pin is tied directly to the matching
+    // ad_bus bit.  Vivado infers one IOB tristate per bit:
+    //   - driven   when lbtiny_mem asserts drive_en (read response)
+    //   - driven   when viewer/CPU asserts mem_ad_oe (viewer write or CPU cycle)
+    //   - floating when STM32 owns the bus (mem_ad_oe=0, drive_en=0), so the
+    //              STM32's GPIO output reaches lbtiny_mem unimpeded
+    assign JB_AD_LO[1] = ad_bus[0];
+    assign JB_AD_LO[2] = ad_bus[1];
+    assign JB_AD_LO[3] = ad_bus[2];
+    assign JB_AD_LO[4] = ad_bus[3];
+    assign JB_AD_HI[7]  = ad_bus[4];
+    assign JB_AD_HI[8]  = ad_bus[5];
+    assign JB_AD_HI[9]  = ad_bus[6];
+    assign JB_AD_HI[10] = ad_bus[7];
 
 endmodule
 

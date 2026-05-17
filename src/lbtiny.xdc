@@ -97,20 +97,26 @@ set_property -dict { PACKAGE_PIN U13 IOSTANDARD LVCMOS33 } [get_ports { AN[7] }]
 ##   JA[8]      -> RD_n
 ##   JA[9]      -> WR_n
 ##   JA[10]     -> RESET_n  (STM32 pulls low to take bus ownership)
-## External pull strategy (on breadboard or reference board):
-##   10k pull-DOWN on ALE  (JA pin 7 -> GND)
-##   10k pull-UP   on RD_n (JA pin 8 -> 3V3)
-##   10k pull-UP   on WR_n (JA pin 9 -> 3V3)
-##   10k pull-UP   on RESET_n (JA pin 10 -> 3V3) — idle = not asserted
+##
+## Pull strategy:
+##   Internal IOB pulls ensure safe idle levels when the STM32 is not
+##   connected.  External 10k resistors on the breadboard / reference board
+##   override these (external wins — they are stronger than the ~50k IOB pull).
+##
+##   RESET_n  -> PULLUP   (float = high = not asserted, CPU runs normally)
+##   RD_n     -> PULLUP   (float = high = not asserted, no spurious reads)
+##   WR_n     -> PULLUP   (float = high = not asserted, no spurious writes)
+##   ALE      -> PULLDOWN (float = low  = data phase,  no spurious latches)
+##   A[11:8]  -> PULLDOWN (float = 0000 = harmless when ALE is low)
 ## -------------------------------------------------------------------------
-set_property -dict { PACKAGE_PIN C17 IOSTANDARD LVCMOS33 } [get_ports { JA_AB[1]   }]  ;# JA1  - A[8]
-set_property -dict { PACKAGE_PIN D18 IOSTANDARD LVCMOS33 } [get_ports { JA_AB[2]   }]  ;# JA2  - A[9]
-set_property -dict { PACKAGE_PIN E18 IOSTANDARD LVCMOS33 } [get_ports { JA_AB[3]   }]  ;# JA3  - A[10]
-set_property -dict { PACKAGE_PIN G17 IOSTANDARD LVCMOS33 } [get_ports { JA_AB[4]   }]  ;# JA4  - A[11]
-set_property -dict { PACKAGE_PIN D17 IOSTANDARD LVCMOS33 } [get_ports { JA_CTL[7]  }]  ;# JA7  - ALE
-set_property -dict { PACKAGE_PIN E17 IOSTANDARD LVCMOS33 } [get_ports { JA_CTL[8]  }]  ;# JA8  - RD_n
-set_property -dict { PACKAGE_PIN F18 IOSTANDARD LVCMOS33 } [get_ports { JA_CTL[9]  }]  ;# JA9  - WR_n
-set_property -dict { PACKAGE_PIN G18 IOSTANDARD LVCMOS33 } [get_ports { JA_CTL[10] }]  ;# JA10 - RESET_n
+set_property -dict { PACKAGE_PIN C17 IOSTANDARD LVCMOS33 PULLDOWN true } [get_ports { JA_AB[1]   }]  ;# JA1  - A[8]
+set_property -dict { PACKAGE_PIN D18 IOSTANDARD LVCMOS33 PULLDOWN true } [get_ports { JA_AB[2]   }]  ;# JA2  - A[9]
+set_property -dict { PACKAGE_PIN E18 IOSTANDARD LVCMOS33 PULLDOWN true } [get_ports { JA_AB[3]   }]  ;# JA3  - A[10]
+set_property -dict { PACKAGE_PIN G17 IOSTANDARD LVCMOS33 PULLDOWN true } [get_ports { JA_AB[4]   }]  ;# JA4  - A[11]
+set_property -dict { PACKAGE_PIN D17 IOSTANDARD LVCMOS33 PULLDOWN true } [get_ports { JA_CTL[7]  }]  ;# JA7  - ALE
+set_property -dict { PACKAGE_PIN E17 IOSTANDARD LVCMOS33 PULLUP   true } [get_ports { JA_CTL[8]  }]  ;# JA8  - RD_n
+set_property -dict { PACKAGE_PIN F18 IOSTANDARD LVCMOS33 PULLUP   true } [get_ports { JA_CTL[9]  }]  ;# JA9  - WR_n
+set_property -dict { PACKAGE_PIN G18 IOSTANDARD LVCMOS33 PULLUP   true } [get_ports { JA_CTL[10] }]  ;# JA10 - RESET_n
 
 ## -------------------------------------------------------------------------
 ## Pmod JB — multiplexed address/data bus (bidirectional)
