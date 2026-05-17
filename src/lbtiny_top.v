@@ -102,10 +102,37 @@ module lbtiny_top (
     end
 
     //--------------------------------------------------------------------------
-    // Combined reset logic
+    // Power-on memory reset
+    //--------------------------------------------------------------------------
+    // lbtiny_mem's RESET_n only clears its internal control state (address
+    // latch, flash command FSM, write-strobe edge detector). It does NOT
+    // clear BRAM contents. We assert it for a few cycles after power-on to
+    // make sure the flash FSM starts in S_IDLE, then leave it high forever.
+    //
+    // Critically, mem_reset_n must NOT track cpu_reset_n: when the viewer
+    // (SW15 up) or the STM32 (Pmod RESET_n low) takes the bus, the CPU is
+    // held in reset but the memory must remain operational so the new master
+    // can read and write through it.
+    reg        mem_reset_n;
+    reg [5:0]  mem_reset_count;
+    initial begin mem_reset_n = 1'b0; mem_reset_count = 6'd0; end
+
+    always @(posedge clk_bus) begin
+        if (!mem_reset_n) begin
+            mem_reset_count <= mem_reset_count + 6'd1;
+            if (mem_reset_count == 6'd40)
+                mem_reset_n <= 1'b1;
+        end
+    end
+
+    //--------------------------------------------------------------------------
+    // Combined CPU reset logic
     // stm32_reset_n: Pmod JA pin 10, active low (STM32 pulls low to take bus)
     // sw15_q2:       SW15 up = halt CPU (active high)
     // cpu_reset_n:   low when either source requests halt
+    //
+    // This drives the CPU's reset (so it tristates) and the bus mux's
+    // "cpu_halted" select. It does NOT drive the memory reset — see above.
     //--------------------------------------------------------------------------
     wire stm32_reset_n = JA_CTL[10];
     wire cpu_reset_n   = stm32_reset_n & ~sw15_q2;
@@ -190,7 +217,7 @@ module lbtiny_top (
     //--------------------------------------------------------------------------
     lbtiny_mem u_mem (
         .CLK      (clk_bus),
-        .RESET_n  (cpu_reset_n),
+        .RESET_n  (mem_reset_n),
         .A        (mem_A),
         .AD       (ad_bus),
         .ALE      (mem_ALE),
