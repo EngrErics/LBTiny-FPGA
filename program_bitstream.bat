@@ -2,21 +2,23 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 rem ============================================================
-rem Program LBTiny-MemBus bitstream to a Digilent Nexys A7 via USB-JTAG
+rem Program LBTiny bitstream to a Digilent Nexys A7 via USB-JTAG
 rem
 rem Usage:
 rem   program_bitstream.bat
 rem   program_bitstream.bat path\to\some.bit
 rem
 rem Default bitstream:
-rem   build\LBTiny-MemBus.runs\impl_1\lbtiny_top.bit
+rem   build\LBTiny.runs\impl_1\lbtiny_top.bit
 rem ============================================================
 
 cd /d "%~dp0"
 
-set "BITFILE=%~1"
-rem if "%BITFILE%"=="" set "BITFILE=build/LBTiny-Bringup/LBTiny-Bringup.runs/impl_1/lbtiny_bringup_top.bit"
-if "%BITFILE%"=="" set "BITFILE=build/LBTiny-Top/LBTiny-Top.runs/impl_1/lbtiny_top.bit"
+if "%~1"=="" (
+    set "BITFILE=build\LBTiny\LBTiny.runs\impl_1\lbtiny_top.bit"
+) else (
+    set "BITFILE=%~1"
+)
 
 if not exist "%BITFILE%" (
     echo ERROR: bitstream not found:

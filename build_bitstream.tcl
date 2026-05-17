@@ -3,51 +3,29 @@
 # Called by build_bitstream.bat
 #
 # Usage:
-#   vivado -mode batch -source vivado_build.tcl -tclargs xc7a100tcsg324-1 [bringup|top]
-#
-# Second argument selects the build target (default: bringup).
-#   bringup  -> lbtiny_bringup_top + lbtiny_bringup.xdc  (no CPU, safe first build)
-#   top      -> lbtiny_top + lbtiny.xdc                  (integrated with CPU)
+#   vivado -mode batch -source vivado_build.tcl -tclargs xc7a100tcsg324-1
 # ================================================================
 
 if {$argc < 1} {
-    puts "ERROR: missing FPGA part. Example: vivado -mode batch -source vivado_build.tcl -tclargs xc7a100tcsg324-1 bringup"
+    puts "ERROR: missing FPGA part. Example: vivado -mode batch -source vivado_build.tcl -tclargs xc7a100tcsg324-1"
     exit 1
 }
 
 set part_name  [lindex $argv 0]
-set target     [expr {$argc > 1 ? [lindex $argv 1] : "bringup"}]
+set proj_name  "LBTiny"
+set top_name   "lbtiny_top"
 set root_dir   [file normalize "."]
 set src_dir    [file join $root_dir "src"]
+set build_dir  [file join $root_dir "build" $proj_name]
 
-# Shared source files (both tops need these)
-set shared_rtl [list \
+set rtl_files [list \
     [file join $src_dir "lbtiny_mem.v"] \
     [file join $src_dir "lbtiny_viewer.v"] \
+    [file join $src_dir "lbtiny_cpu.v"] \
+    [file join $src_dir "lbtiny_top.v"] \
 ]
-
-# Target-specific files and settings
-if {$target eq "bringup"} {
-    set proj_name "LBTiny-Bringup"
-    set top_name  "lbtiny_bringup_top"
-    set top_rtl   [file join $src_dir "lbtiny_bringup_top.v"]
-    set xdc_file  [file join $src_dir "lbtiny_bringup.xdc"]
-} elseif {$target eq "top"} {
-    set proj_name "LBTiny-Top"
-    set top_name  "lbtiny_top"
-    set top_rtl   [list \
-        [file join $src_dir "lbtiny_cpu.v"] \
-        [file join $src_dir "lbtiny_top.v"] \
-    ]
-    set xdc_file  [file join $src_dir "lbtiny.xdc"]
-} else {
-    puts "ERROR: unknown target '$target'. Use 'bringup' or 'top'."
-    exit 1
-}
-
-set rtl_files  [concat $shared_rtl $top_rtl]
-set mem_file   [file join $src_dir "rom_init.mem"]
-set build_dir  [file join $root_dir "build" $proj_name]
+set mem_file  [file join $src_dir "rom_init.mem"]
+set xdc_file  [file join $src_dir "lbtiny.xdc"]
 
 foreach f [concat $rtl_files [list $mem_file $xdc_file]] {
     if {![file exists $f]} {

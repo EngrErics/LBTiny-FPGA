@@ -1,5 +1,5 @@
 # ================================================================
-# Vivado batch hardware programming for LBTiny-MemBus / Nexys A7
+# Vivado batch hardware programming for LBTiny / Nexys A7
 #
 # Usage:
 #   vivado -mode batch -source program_bitstream.tcl -tclargs path/to/lbtiny_top.bit
@@ -9,7 +9,7 @@
 
 if {$argc < 1} {
     puts "ERROR: missing bitstream path."
-    puts "Example: vivado -mode batch -source program_bitstream.tcl -tclargs build/LBTiny-MemBus.runs/impl_1/lbtiny_top.bit"
+    puts "Example: vivado -mode batch -source program_bitstream.tcl -tclargs build/LBTiny/LBTiny.runs/impl_1/lbtiny_top.bit"
     exit 1
 }
 

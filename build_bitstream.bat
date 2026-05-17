@@ -4,42 +4,17 @@ setlocal EnableExtensions EnableDelayedExpansion
 rem ============================================================
 rem Build Vivado bitstream for LBTiny / Nexys A7
 rem Usage:
-rem   build_bitstream.bat                   rem bringup, 100T default
-rem   build_bitstream.bat bringup           rem bringup, 100T
-rem   build_bitstream.bat top               rem integrated top, 100T
-rem   build_bitstream.bat bringup 50T       rem bringup, 50T
-rem   build_bitstream.bat top 50T           rem integrated top, 50T
-rem   build_bitstream.bat top 100T          rem integrated top, 100T
+rem   build_bitstream.bat        rem 100T default
+rem   build_bitstream.bat 50T   rem Nexys A7-50T
+rem   build_bitstream.bat 100T  rem Nexys A7-100T
 rem ============================================================
 
 cd /d "%~dp0"
 
-set "TARGET=%~1"
-set "BOARD_SIZE=%~2"
 if "%~1"=="" (
-    set "TARGET=bringup"
-) else (
-    set "TARGET=%~1"
-)
-
-if "%~2"=="" (
     set "BOARD_SIZE=100T"
 ) else (
-    set "BOARD_SIZE=%~2"
-)
-
-if /I "%TARGET%"=="bringup" (
-    set "PROJ_NAME=LBTiny-Bringup"
-    set "TOP_NAME=lbtiny_bringup_top"
-) else if /I "%TARGET%"=="top" (
-    set "PROJ_NAME=LBTiny-Top"
-    set "TOP_NAME=lbtiny_top"
-) else (
-    echo ERROR: Unknown target "%TARGET%".
-    echo Use either:
-    echo   %~nx0 bringup [50T^|100T]
-    echo   %~nx0 top     [50T^|100T]
-    exit /b 1
+    set "BOARD_SIZE=%~1"
 )
 
 if /I "%BOARD_SIZE%"=="50T" (
@@ -99,15 +74,15 @@ exit /b 1
 
 :vivado_found
 echo Using Vivado from PATH.
-echo Target: %TARGET% ^| FPGA part: %FPGA_PART%
+echo FPGA part: %FPGA_PART%
 echo.
 
-if not exist "vivado_build.tcl" (
-    echo ERROR: vivado_build.tcl not found in project root.
+if not exist "build_bitstream.tcl" (
+    echo ERROR: build_bitstream.tcl not found in project root.
     exit /b 1
 )
 
-vivado -mode batch -source vivado_build.tcl -tclargs "%FPGA_PART%" "%TARGET%"
+vivado -mode batch -source build_bitstream.tcl -tclargs "%FPGA_PART%"
 if errorlevel 1 (
     echo.
     echo ERROR: Vivado build failed.
@@ -117,5 +92,5 @@ if errorlevel 1 (
 echo.
 echo Build complete.
 echo Bitstream should be under:
-echo   build\%PROJ_NAME%\%PROJ_NAME%.runs\impl_1\%TOP_NAME%.bit
+echo   build\LBTiny.runs\impl_1\lbtiny_top.bit
 exit /b 0
