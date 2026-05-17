@@ -1,296 +1,272 @@
-# LBTiny — Supervisor ↔ FPGA Memory Bring-up
+# LBTiny-MemBus
 
-This release wires the STM32 supervisor (Nucleo-F446RE) to the LBTiny bus
-slave running on the Nexys A7, using the same multiplexed bus protocol the
-eventual reference board will use. The IDE can now program and read back
-ROM/RAM through the supervisor.
+FPGA-based memory subsystem emulator for the LBTiny 8-bit CPU, running on a Digilent Nexys A7. Emulates the external ROM, RAM, and MMIO hardware that will eventually live on the LBTiny reference board, allowing CPU firmware development and supervisor integration to proceed before the physical board is available.
 
-## What's in this directory
+---
+
+## What this does
+
+The FPGA emulates three memory-mapped devices on an 8085/8051-style multiplexed address/data bus:
+
+| Region | Size | Device emulated | Notes |
+|--------|------|-----------------|-------|
+| `0x000–0xBFF` | 3 KB | SST39VF010A NOR flash | Requires unlock+program sequence to write |
+| `0xC00–0xEFF` | 768 B | AS6C6264 SRAM | Direct write, no command sequence |
+| `0xF00–0xFFF` | 256 B | MMIO stub | Reads `0x00`, writes ignored |
+
+Three agents can own the bus:
+
+- **LBTiny CPU** — runs when SW15 is down and STM32 is not asserting reset
+- **STM32 Nucleo supervisor** — takes the bus by pulling `RESET_n` low via Pmod JA
+- **Memory viewer FSM** — takes the bus when SW15 is up (CPU halted by switch)
+
+Bus ownership is mutually exclusive by convention. The STM32 and the viewer FSM must not be used simultaneously.
+
+---
+
+## Repository structure
 
 ```
-fpga/lbtiny_top.v          Top-level Verilog for the Nexys A7
-fpga/lbtiny.xdc            Vivado pin constraints
-fpga/lbtiny_bus_slave.v    (from earlier — copy into the same project)
-fpga/rom_init.mem          (from earlier — blank-flash template)
-firmware/main.c            Updated STM32 firmware (protocol v4)
-ide/hw_transfer.py         Updated IDE dialog with memory operations
-docs/README.md             This file
+src/
+  lbtiny_top.v          Production top: CPU + memory + viewer
+  lbtiny_mem.v          Memory subsystem (ROM, RAM, MMIO, peek ports)
+  lbtiny_viewer.v       Viewer: live observation + mutation FSM + bus master + 7-seg
+  lbtiny_cpu.v          CPU placeholder (real CPU replaces this file only)
+  lbtiny.xdc            Vivado pin constraints for lbtiny_top
+  rom_init.mem          ROM initialization (blank flash template, all 0xFF)
+
+build_bitstream.bat     Build the bitstream (Windows)
+build_bitstream.tcl     Vivado batch build script
+program_bitstream.bat   Program the Nexys A7 over JTAG (Windows)
+program_bitstream.tcl   Vivado hardware programming script
 ```
 
-## Physical wiring
+---
 
-### What you need
+## User interface (Nexys A7)
 
-- Nexys A7 (-50T or -100T)
-- Nucleo-F446RE
-- ~16 male-male jumper wires for the bus signals
-- 3 × 10 kΩ resistors (pull-ups/down for the strobes)
-- A small breadboard or perfboard to host the pulls and route signals
-- Two GND jumpers
-- Optional: 3.3 V rail from the Nucleo's CN7-16 to the breadboard for the pulls
+### Switches
 
-### Pin map (Nexys side ↔ Nucleo side)
+| Switch | Function |
+|--------|----------|
+| `SW[11:0]` | Address to observe (live, via peek port — no bus transaction) |
+| `SW[15]` | **UP** = halt CPU, enable BTNC/BTNU mutation. **DOWN** = CPU runs, mutation blocked |
 
-All signals are 3.3 V LVCMOS33. Polarity is identical on both ends.
+### Buttons
 
-| Signal | Nexys Pmod / pin | FPGA ball | Nucleo MCU pin | Nucleo Morpho header *(verify!)* |
-|---|---|---|---|---|
-| A[8]    | JA pin 1  | C17 | PC0  | CN7 pin 38 |
-| A[9]    | JA pin 2  | D18 | PC1  | CN7 pin 36 |
-| A[10]   | JA pin 3  | E18 | PC2  | CN7 pin 35 |
-| A[11]   | JA pin 4  | G17 | PC3  | CN7 pin 37 |
-| ALE     | JA pin 7  | D17 | PC12 | CN7 pin 3  |
-| RD_n    | JA pin 8  | E17 | PB0  | CN7 pin 34 |
-| WR_n    | JA pin 9  | F18 | PB1  | CN10 pin 24 |
-| RESET_n | JA pin 10 | G18 | PB2  | CN10 pin 22 |
-| AD[0]   | JB pin 1  | D14 | PC0... |  |
-| AD[1]   | JB pin 2  | F16 | (see below) | |
-| ... | ... | ... | ... | ... |
+| Button | Function | Requires SW15 up |
+|--------|----------|-----------------|
+| `BTNC` | Fill ROM (`0x000–0xBFF`) and RAM (`0xC00–0xEFF`) with `addr[7:0]` | Yes |
+| `BTNU` | Reinitialize: ROM chip-erase + RAM fill `0xFF` | Yes |
 
-**⚠️ Morpho pin numbers in the table are approximate and based on web
-references — verify against the official ST UM1724 user manual before
-wiring**. The MCU-pin assignments (PC0=AD[0], etc.) are what the firmware
-programs and are authoritative.
+BTNC uses the real flash unlock+program sequence for ROM (4 bus writes per byte) and direct writes for RAM. Total fill time is ~44 ms.
 
-Easier mental model: AD[0..7] are PC0..PC7, A[8..11] are PC8..PC11, ALE is
-PC12, then RD_n / WR_n / RESET_n are PB0 / PB1 / PB2.
+### LEDs
 
-### Pull resistors on the breadboard
+| LED | Meaning |
+|-----|---------|
+| `LED[11:0]` | Currently viewed address (tracks SW[11:0] live) |
+| `LED[12]` | Viewed address is in ROM range (`0x000–0xBFF`) |
+| `LED[13]` | Viewed address is in RAM range (`0xC00–0xEFF`) |
+| `LED[14]` | BTNC fill in progress |
+| `LED[15]` | CPU is halted (SW15 up or STM32 holding reset) |
 
-Three pulls hold the strobes at safe levels when both supervisor and CPU
-are tristated:
+### 7-segment display
 
-| Signal | Pull | Where to wire |
-|---|---|---|
-| ALE     | 10 kΩ to **GND**  | between the ALE jumper line and ground |
-| RD_n    | 10 kΩ to **3.3 V** | between the RD_n jumper line and 3V3 |
-| WR_n    | 10 kΩ to **3.3 V** | between the WR_n jumper line and 3V3 |
+```
+Digit:  7   6   5   4   3   2   1   0
+        _  [  address  ]  _   _ [data ]
+```
 
-You can also add a pull-up on RESET_n (10 kΩ to 3.3 V) to keep the CPU out
-of reset when both ends release it. For this bring-up it isn't strictly
-needed because the supervisor always drives RESET_n actively, but it's a
-good habit and matches the reference-board design.
+Digits 6–4 show the 12-bit viewed address in hex. Digits 1–0 show the 8-bit data at that address in hex. Updates live from the peek port — no bus transaction required.
+
+---
+
+## Reset architecture
+
+```
+cpu_reset_n = stm32_reset_n & ~sw15_synced
+```
+
+Any source can hold the CPU in reset; the CPU only runs when all sources release it. The memory subsystem has its own independent power-on reset and is never held in reset by SW15 or the STM32 — it must remain active so the viewer and supervisor can write to it while the CPU is halted.
+
+---
+
+## Build and program
+
+### Requirements
+
+- Vivado 2024.2 (or compatible). Either on PATH or installed under `C:\Xilinx\Vivado\` or `C:\AMD\Vivado\`.
+- Nexys A7-100T or -50T connected via USB-JTAG (PROG port).
+
+### Build
+
+```bat
+build_bitstream.bat        # Nexys A7-100T (default)
+build_bitstream.bat 50T    # Nexys A7-50T
+```
+
+Output: `build\LBTiny\LBTiny.runs\impl_1\lbtiny_top.bit`
+
+### Program
+
+```bat
+program_bitstream.bat                  # programs default bitstream
+program_bitstream.bat path\to\file.bit # programs a specific bitstream
+```
+
+---
+
+## STM32 supervisor wiring (Pmod)
+
+All signals are 3.3 V LVCMOS33. The STM32 drives the bus when it pulls `RESET_n` low; the CPU is held in reset during this time.
+
+### Pmod JA — bus control + upper address
+
+| Signal | Pmod JA pin | FPGA ball | Nucleo MCU pin |
+|--------|-------------|-----------|----------------|
+| `A[8]` | 1 | C17 | PC8 |
+| `A[9]` | 2 | D18 | PC9 |
+| `A[10]` | 3 | E18 | PC10 |
+| `A[11]` | 4 | G17 | PC11 |
+| `ALE` | 7 | D17 | PC12 |
+| `RD_n` | 8 | E17 | PB0 |
+| `WR_n` | 9 | F18 | PB1 |
+| `RESET_n` | 10 | G18 | PB2 |
+
+### Pmod JB — multiplexed address/data bus (bidirectional)
+
+| Signal | Pmod JB pin | FPGA ball | Nucleo MCU pin |
+|--------|-------------|-----------|----------------|
+| `AD[0]` | 1 | D14 | PC0 |
+| `AD[1]` | 2 | F16 | PC1 |
+| `AD[2]` | 3 | G16 | PC2 |
+| `AD[3]` | 4 | H14 | PC3 |
+| `AD[4]` | 7 | E16 | PC4 |
+| `AD[5]` | 8 | F13 | PC5 |
+| `AD[6]` | 9 | G13 | PC6 |
+| `AD[7]` | 10 | H16 | PC7 |
+
+> **⚠️ Verify Nucleo Morpho header pin numbers against the official ST UM1724 user manual before wiring.** The MCU pin assignments above are what the firmware programs and are authoritative.
+
+### Pull resistors
+
+| Signal | Pull | Reason |
+|--------|------|--------|
+| `ALE` | 10 kΩ to GND | Safe low when bus is idle |
+| `RD_n` | 10 kΩ to 3.3 V | Safe high (deasserted) when bus is idle |
+| `WR_n` | 10 kΩ to 3.3 V | Safe high (deasserted) when bus is idle |
+| `RESET_n` | 10 kΩ to 3.3 V | CPU runs when STM32 releases |
 
 ### Ground
 
-Run **at least one** ground wire between the Nucleo (CN7 pin 8 or 22) and
-the Nexys (any Pmod pin 5 or 11). Without a common ground the bus levels
-will be ambiguous on at least one side.
+Run at least one GND wire between the Nucleo (CN7 pin 8 or 22) and the Nexys (any Pmod pin 5 or 11). Without a common ground, bus levels will be ambiguous.
 
-## Reference-board notes (future)
+---
 
-The bring-up wiring uses bare GPIO. On the eventual reference board, **the
-supervisor's outputs will be buffered through a 74LVC245 octal bus
-transceiver** between the STM32 and the CPU bus, so the supervisor can
-truly tristate itself when releasing the bus. Specifically:
+## Memory viewer — observation vs mutation
 
-- 74LVC245 `OE` tied to supervisor `BUS_OE_n` (an additional GPIO)
-- 74LVC245 `DIR` tied to a supervisor GPIO that flips A→B vs B→A
-  on each direction change. Probably easiest is to keep DIR set to "drive
-  toward the CPU bus" during all supervisor operations and pull `OE` high
-  to release.
-- For RESET_n / INT we don't need the buffer since they only go in one
-  direction.
+The viewer provides two independent capabilities:
 
-The 10 kΩ pulls on RD_n / WR_n / ALE move from the breadboard onto the
-reference board near the bus side of the buffer.
+**Observation** is always live regardless of bus ownership. `SW[11:0]` selects an address; the data at that address is read directly from the BRAM peek port and displayed on the 7-seg and LEDs in real time. The CPU can be running and the display still updates — no bus transaction is needed.
 
-## Build instructions
+**Mutation** (BTNC/BTNU) requires SW15 up. The viewer's internal bus master drives the 8085-style bus to issue real flash command sequences for ROM writes and direct writes for RAM. This is the same protocol the STM32 supervisor uses.
 
-### Vivado (FPGA)
+---
 
-1. New project, target `xc7a100tcsg324-1` (Nexys A7-100T). For -50T use the
-   matching part.
-2. Add source files: `lbtiny_top.v`, `lbtiny_bus_slave.v`. Set
-   `lbtiny_top` as the top module.
-3. Add constraint: `lbtiny.xdc`.
-4. Add memory init: `rom_init.mem` (the file path must be findable at
-   simulation time; for synthesis Vivado embeds it into the bitstream
-   via `$readmemh`).
-5. Generate bitstream → program device.
+## Flash command protocol (SST39VF010A emulation)
 
-### STM32 (firmware)
+ROM cannot be written with a bare bus write. The full unlock sequence must precede every byte program.
 
-1. STM32CubeIDE: existing project from step 3. Replace `main.c`.
-2. No changes to project settings or HAL configuration needed.
-3. Build → Run. The blue LED on LD2 should blink ½ Hz.
+### Byte program (4 bus writes)
 
-### IDE (host)
+| Step | Address | Data |
+|------|---------|------|
+| 1 | `0x555` | `0xAA` |
+| 2 | `0x2AA` | `0x55` |
+| 3 | `0x555` | `0xA0` |
+| 4 | target | data byte |
 
-1. Replace `hw_transfer.py`.
-2. Run the IDE as before. The "Hardware" dialog now shows a "Memory
-   Operations" group below the existing CRC test controls.
+### Chip erase (6 bus writes)
 
-## Bring-up procedure
+| Step | Address | Data |
+|------|---------|------|
+| 1 | `0x555` | `0xAA` |
+| 2 | `0x2AA` | `0x55` |
+| 3 | `0x555` | `0x80` |
+| 4 | `0x555` | `0xAA` |
+| 5 | `0x2AA` | `0x55` |
+| 6 | any ROM addr | `0x30` |
 
-Recommended order, smallest verification step to largest:
+After step 6 an internal erase walker writes `0xFF` to `0x000–0xBFF` at one byte per bus clock (~800 µs at 3.846 MHz). Any new ROM access should wait at least 3300 bus clocks after issuing the erase command.
 
-1. **Load the FPGA bitstream.** With nothing connected to the Pmods,
-   power on. The LEDs should all be off (or showing 0x000 for the
-   latched address, since RESET_n is being held low by the external
-   pull or floating). When you press the **CPU_RESETN** button on the
-   Nexys, the FPGA's reset is asserted — but that doesn't affect the
-   slave's RESET_n input (which is wired to JA pin 10, not the on-board
-   button). For this bring-up you can ignore the Nexys reset button.
+### Flash FSM states
 
-2. **Connect the wires.** Power both boards off, wire everything per
-   the pin map, double-check the pulls, then power on.
+| State | Meaning |
+|-------|---------|
+| `S_IDLE` | Waiting for `0xAA @ 0x555` |
+| `S_UNLOCK1` | Got unlock 1, waiting for `0x55 @ 0x2AA` |
+| `S_UNLOCK2` | Got unlock 2, waiting for command at `0x555` |
+| `S_PROGRAM` | Got `0xA0`, next write programs one byte |
+| `S_ERASE1–3` | Second unlock pair for chip erase |
 
-3. **Flash and run the supervisor firmware.** Open the IDE, open the
-   Hardware dialog, connect to the Nucleo over its ST-Link COM port.
+Any unexpected write in any state returns the FSM to `S_IDLE`.
 
-4. **Ping.** Click "Ping". A green "ping OK" status should appear in
-   a few ms. The Nexys LEDs do not change — ping does not touch the bus.
+---
 
-5. **Erase ROM.** Click "Erase ROM". The Nexys LEDs should briefly show
-   address 0x555, then 0x2AA, then 0x555 (and so on through the
-   six-byte erase sequence). After ~5 ms the status shows "erase OK".
+## STM32 supervisor protocol (v4)
 
-6. **Read ROM.** Click "Read ROM". This takes ~150 ms. The hex view
-   fills with 3072 bytes of `FF`. The LEDs flicker as 0x000..0xBFF
-   scrolls through the address latch. LED[15] (drive_en) is lit
-   throughout because the slave drives AD during every read.
+### Frame format
 
-7. **Program ROM from current binary.** With a small program assembled
-   in the IDE, click "Program ROM from Current Binary". This takes
-   ~600 ms for a kilobyte. Then "Read ROM" to verify the bytes come
-   back unchanged.
+```
+PC → Nucleo:   0xA5  [cmd: 1B]  [len: 4B LE]  [payload...]
+Nucleo → PC:   0x5A  [cmd: 1B]  [status: 1B]  [data_len: 4B LE]  [data...]
+```
 
-8. **RAM round-trip.** Use the Addr/Len controls to write to RAM
-   (CMD_MEM_WRITE goes through the bus driver, which sends a single
-   direct write for the RAM range). Then "Read Range" to verify. The
-   classic test is to write `0xC00..0xC0F` with `00 11 22 33 ... FF`
-   and read it back.
+### Commands
+
+| Code | Name | Request payload | Response data |
+|------|------|-----------------|---------------|
+| `0x01` | `TRANSFER_CRC` | bytes | declared_len (4B) + crc (4B) |
+| `0x02` | `PING` | — | — |
+| `0x10` | `MEM_WRITE` | addr (2B) + bytes | — |
+| `0x11` | `MEM_READ` | addr (2B) + len (2B) | bytes |
+| `0x12` | `FLASH_ERASE` | — | — |
+
+### Status codes
+
+| Code | Name |
+|------|------|
+| `0x00` | `OK` |
+| `0x01` | `OVERFLOW` |
+| `0x02` | `OUT_OF_RANGE` |
+| `0x03` | `PAYLOAD_INVALID` |
+| `0xFF` | `UNKNOWN_CMD` |
+
+---
 
 ## Troubleshooting
 
 | Symptom | Likely cause |
-|---|---|
-| All reads return `0xFF` | RD_n pull-up missing; supervisor isn't asserting RD_n properly; or the slave's cs_* never asserts (check LED[12..14] during a read) |
-| All reads return `0x00` | AD lines stuck low — check ground continuity; also check that the supervisor flips PC0–PC7 to *input* during the data phase of a read |
-| Reads return random garbage | Pull resistors missing or wrong polarity; common-mode noise on the breadboard; ground bounce; bus drivers fighting |
-| ROM stays at `0xFF` after program | Flash unlock sequence isn't reaching the slave intact. Watch LEDs during program: should see 0x555 → 0x2AA → 0x555 → target_addr. If the addresses are wrong, the supervisor's address output isn't being driven correctly. Also check that WR_n is rising cleanly (scope helps). |
-| LED[15] (drive_en) never lights during a read | Either RD_n isn't getting asserted low at the FPGA side (cable/wiring issue) or the latched address is outside ROM/RAM/MMIO (check LED[11:0]) |
-| `STATUS_OUT_OF_RANGE` from the supervisor | Host is requesting a region of memory that wraps past 0xFFF |
-| `STATUS_PAYLOAD_INVAL` from the supervisor | Frame integrity is wrong — usually a stale-byte issue. The drain logic should handle it; reset the IDE worker by disconnecting/reconnecting |
+|---------|--------------|
+| All reads return `0xFF` | `RD_n` pull-up missing; supervisor not asserting `RD_n`; check `LED[12:13]` to confirm address is decoding to a valid region |
+| All reads return `0x00` | AD lines stuck low — check GND continuity; confirm STM32 switches PC0–PC7 to input during read data phase |
+| Reads return garbage | Pull resistors missing or wrong polarity; ground bounce; two masters driving simultaneously |
+| ROM unchanged after BTNC/BTNU | SW15 must be up before pressing buttons; confirm `LED[14]` lights on press |
+| ROM unchanged after supervisor program | Flash unlock sequence not reaching memory intact — scope `WR_n` and check address lines during program sequence |
+| `LED[15]` always lit | SW15 is up or STM32 is holding `RESET_n` low |
+| `STATUS_OUT_OF_RANGE` | Host requesting address past `0xFFF` |
+| `STATUS_PAYLOAD_INVAL` | Frame integrity error — disconnect/reconnect IDE worker |
 
-## Protocol summary (v4)
+---
 
-Frame format unchanged from v3:
+## Reference board notes
 
-```
-PC → Nucleo:  0xA5  [cmd_1B]  [len_le_4B]  [payload...]
-Nucleo → PC:  0x5A  [cmd_1B]  [status_1B]  [data_len_le_4B]  [data...]
-```
+The current wiring uses bare GPIO between the STM32 and the Nexys Pmod. On the eventual reference board:
 
-Commands:
+- The supervisor outputs will be buffered through a **74LVC245 octal bus transceiver** so the STM32 can truly tristate the bus when releasing it
+- `OE` on the 74LVC245 ties to a supervisor `BUS_OE_n` GPIO
+- `RESET_n` and `INT` do not need buffering (unidirectional)
+- Pull resistors on `RD_n`, `WR_n`, and `ALE` move from the breadboard onto the reference board near the buffer
 
-| Code | Name | Request payload | Response data |
-|---|---|---|---|
-| 0x01 | TRANSFER_CRC | bytes | declared_len_4B + crc_4B |
-| 0x02 | PING         | (none) | (none) |
-| 0x10 | MEM_WRITE    | addr_2B + bytes | (none) |
-| 0x11 | MEM_READ     | addr_2B + len_2B | bytes |
-| 0x12 | FLASH_ERASE  | (none) | (none) |
-
-Status codes:
-
-| Code | Name |
-|---|---|
-| 0x00 | OK |
-| 0x01 | OVERFLOW (only used by CRC) |
-| 0x02 | OUT_OF_RANGE |
-| 0x03 | PAYLOAD_INVALID |
-| 0xFF | UNKNOWN_CMD |
-
-
-# LBTiny Bus Slave — Flash Programming Notes
-The goal of this project is to emulate the SST39VF010A NOR Flash, AS6C6264 SRAM, 74HC573 Latch and necessary address decoding. This can be used to test the supervisor capabilities along with the FPGA LBTiny-Core CPU to verify functionality concurrently with the development and assembly of the reference board that would contain the real hardware.
-
-## Flash command state machine overview
-
-The ROM block emulates the unlock-then-write protocol of the SST39VF010A
-NOR flash. A bare write to the ROM address range does **nothing** — exactly
-as on the real part. To change ROM contents the supervisor must send the
-correct command sequence first.
-
-States:
-
-| State      | Meaning                                              |
-|------------|------------------------------------------------------|
-| `S_IDLE`     | Waiting for the first unlock byte (0xAA @ 0x555).  |
-| `S_UNLOCK1`  | Got 0xAA @ 0x555. Waiting for 0x55 @ 0x2AA.        |
-| `S_UNLOCK2`  | Got 0x55 @ 0x2AA. Waiting for command code @ 0x555.|
-| `S_PROGRAM`  | Got 0xA0 @ 0x555. The next write programs one byte.|
-| `S_ERASE1`   | Got 0x80 @ 0x555. Need second unlock pair.         |
-| `S_ERASE2`   | Got 0xAA @ 0x555 (2nd unlock). Need 0x55 @ 0x2AA.  |
-| `S_ERASE3`   | Got 0x55 @ 0x2AA. Next write of 0x30 triggers erase.|
-
-Any unexpected write returns the FSM to `S_IDLE`. `RESET_n` asynchronously
-resets the FSM to `S_IDLE` so a half-completed sequence cannot survive the
-CPU↔supervisor handoff.
-
-## Programming a single byte (supervisor's job)
-
-To write byte `D` to ROM address `A` (where `A` is in `0x000..0xBFF`):
-
-1. Bus write `0xAA` to address `0x555`
-2. Bus write `0x55` to address `0x2AA`
-3. Bus write `0xA0` to address `0x555`
-4. Bus write `D` to address `A`     ← actually programs the byte
-
-Each "bus write" means the supervisor drives the full 8085-style cycle:
-present address on `A[11:8]` and `AD[7:0]`, pulse `ALE` high then low,
-drive data on `AD[7:0]`, pulse `WR_n` low then high. The slave commits the
-operation on the rising edge of `WR_n`.
-
-Programming 3 KB therefore takes 4 × 3072 = 12 288 bus cycles. At 4 MHz
-with a generous 8 CLK per bus cycle that is ~25 ms total — perfectly fine
-for bring-up.
-
-## Erasing the ROM
-
-To wipe ROM back to all `0xFF`:
-
-1. `0xAA` → `0x555`
-2. `0x55` → `0x2AA`
-3. `0x80` → `0x555`
-4. `0xAA` → `0x555`
-5. `0x55` → `0x2AA`
-6. `0x30` → any ROM-range address
-
-The slave then fills `0x000..0xBFF` with `0xFF` over ~3072 CLK cycles
-(≈770 µs at 4 MHz). Real SST39VF010A erase is tens of ms; the supervisor's
-fixed delay covers either case.
-
-Notes:
-- The real SST39VF010A has 4 KB sectors. Our entire ROM is only 3 KB,
-  so the slave treats the whole ROM as one sector regardless of the
-  address used in step 6.
-- Status-register polling (DQ7 / DQ6 toggling) is **not** modeled. Use
-  fixed delays.
-
-## RAM and MMIO
-
-- RAM (`0xC00–0xEFF`): plain synchronous SRAM. No unlock. Write commits
-  on the rising edge of `WR_n`. Reads return the stored byte while
-  `RD_n` is low.
-- MMIO (`0xF00–0xFFF`): stub. Reads return `0x00`. Writes are dropped.
-
-## Bus tristate
-
-`AD[7:0]` is driven by the slave only when `RD_n` is low *and* the
-registered chip-select for the current cycle is in the ROM, RAM, or MMIO
-range. Otherwise it sits at high-Z so the CPU, supervisor, or another
-peripheral can own the bus. This is the IOB-tristate pattern Vivado
-infers cleanly from the single combinational `assign AD = ...` line.
-
-## `rom_init.mem`
-
-Provided as 256 lines of `FF` to satisfy `$readmemh` for simulation. To
-preload a real program, replace those lines (or add more — up to 4096
-entries) with the assembled hex bytes, one byte per line. Anything not
-covered by the file stays at the `0xFF` initial value set by the
-`initial` block.#   L B T i n y - M e m B u s 
- 
- 
+When the reference board is ready, `lbtiny_mem.v` and the bus protocol are retired — the CPU talks directly to the real SST39VF010A and AS6C6264 devices.
