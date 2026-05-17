@@ -2,17 +2,36 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 rem ============================================================
-rem Build Vivado bitstream for LBTiny-MemBus / Nexys A7
+rem Build Vivado bitstream for LBTiny / Nexys A7
 rem Usage:
-rem   build_bitstream.bat        rem Nexys A7-100T default
-rem   build_bitstream.bat 50T    rem Nexys A7-50T
-rem   build_bitstream.bat 100T   rem Nexys A7-100T
+rem   build_bitstream.bat                   rem bringup, 100T default
+rem   build_bitstream.bat bringup           rem bringup, 100T
+rem   build_bitstream.bat top               rem integrated top, 100T
+rem   build_bitstream.bat bringup 50T       rem bringup, 50T
+rem   build_bitstream.bat top 50T           rem integrated top, 50T
+rem   build_bitstream.bat top 100T          rem integrated top, 100T
 rem ============================================================
 
 cd /d "%~dp0"
 
-set "BOARD_SIZE=%~1"
-if "%BOARD_SIZE%"=="" set "BOARD_SIZE=100T"
+set "TARGET=%~1"
+set "BOARD_SIZE=%~2"
+if "%TARGET%"==""     set "TARGET=bringup"
+if "%BOARD_SIZE%"=""  set "BOARD_SIZE=100T"
+
+if /I "%TARGET%"=="bringup" (
+    set "PROJ_NAME=LBTiny-Bringup"
+    set "TOP_NAME=lbtiny_bringup_top"
+) else if /I "%TARGET%"=="top" (
+    set "PROJ_NAME=LBTiny-Top"
+    set "TOP_NAME=lbtiny_top"
+) else (
+    echo ERROR: Unknown target "%TARGET%".
+    echo Use either:
+    echo   %~nx0 bringup [50T^|100T]
+    echo   %~nx0 top     [50T^|100T]
+    exit /b 1
+)
 
 if /I "%BOARD_SIZE%"=="50T" (
     set "FPGA_PART=xc7a50tcsg324-1"
@@ -20,9 +39,7 @@ if /I "%BOARD_SIZE%"=="50T" (
     set "FPGA_PART=xc7a100tcsg324-1"
 ) else (
     echo ERROR: Unknown board size "%BOARD_SIZE%".
-    echo Use either:
-    echo   %~nx0 50T
-    echo   %~nx0 100T
+    echo Use either 50T or 100T.
     exit /b 1
 )
 
@@ -73,7 +90,7 @@ exit /b 1
 
 :vivado_found
 echo Using Vivado from PATH.
-echo Target FPGA part: %FPGA_PART%
+echo Target: %TARGET% ^| FPGA part: %FPGA_PART%
 echo.
 
 if not exist "vivado_build.tcl" (
@@ -81,7 +98,7 @@ if not exist "vivado_build.tcl" (
     exit /b 1
 )
 
-vivado -mode batch -source vivado_build.tcl -tclargs "%FPGA_PART%"
+vivado -mode batch -source vivado_build.tcl -tclargs "%FPGA_PART%" "%TARGET%"
 if errorlevel 1 (
     echo.
     echo ERROR: Vivado build failed.
@@ -91,5 +108,5 @@ if errorlevel 1 (
 echo.
 echo Build complete.
 echo Bitstream should be under:
-echo   build\LBTiny-MemBus.runs\impl_1\lbtiny_top.bit
+echo   build\%PROJ_NAME%\%PROJ_NAME%.runs\impl_1\%TOP_NAME%.bit
 exit /b 0
