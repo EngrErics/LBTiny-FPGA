@@ -106,10 +106,30 @@ module lbtiny_top (
     // stm32_reset_n: Pmod JA pin 10, active low (STM32 pulls low to take bus)
     // sw15_q2:       SW15 up = halt CPU (active high)
     // cpu_reset_n:   low when either source requests halt
+    //
+    // mem_reset_n is a separate power-on reset for lbtiny_mem. The memory
+    // subsystem must stay out of reset whenever the CPU is halted, because
+    // that is precisely when the viewer wants to write to it via the bus
+    // master. Holding the memory in reset would clear the flash command FSM
+    // and silently drop every write.
     //--------------------------------------------------------------------------
     wire stm32_reset_n = JA_CTL[10];
     wire cpu_reset_n   = stm32_reset_n & ~sw15_q2;
     wire cpu_halted    = ~cpu_reset_n;
+
+    // Power-on reset for the memory subsystem: hold low for 40 bus clocks
+    // after configuration, then release forever.
+    reg       mem_reset_n;
+    reg [5:0] mem_reset_count;
+    initial begin mem_reset_n = 1'b0; mem_reset_count = 6'd0; end
+
+    always @(posedge clk_bus) begin
+        if (!mem_reset_n) begin
+            mem_reset_count <= mem_reset_count + 6'd1;
+            if (mem_reset_count == 6'd40)
+                mem_reset_n <= 1'b1;
+        end
+    end
 
     //--------------------------------------------------------------------------
     // CPU bus signals
@@ -165,7 +185,7 @@ module lbtiny_top (
     //--------------------------------------------------------------------------
     lbtiny_mem u_mem (
         .CLK      (clk_bus),
-        .RESET_n  (cpu_reset_n),
+        .RESET_n  (mem_reset_n),
         .A        (mem_A),
         .AD       (ad_bus),
         .ALE      (mem_ALE),
