@@ -6,28 +6,89 @@ rem Program LBTiny bitstream to a Digilent Nexys A7 via USB-JTAG
 rem
 rem Usage:
 rem   program_bitstream.bat
-rem   program_bitstream.bat path\to\some.bit
+rem       -> program the FPGA with the default .bit (volatile, JTAG)
 rem
-rem Default bitstream:
-rem   build\LBTiny.runs\impl_1\lbtiny_top.bit
+rem   program_bitstream.bat path\to\some.bit
+rem       -> program the FPGA with that .bit (volatile, JTAG)
+rem
+rem   program_bitstream.bat persistent
+rem       -> program the on-board QSPI flash with the default .mcs
+rem          (survives power cycle; set JP1 to QSPI)
+rem
+rem   program_bitstream.bat persistent path\to\some.mcs
+rem   program_bitstream.bat path\to\some.mcs persistent
+rem   program_bitstream.bat path\to\some.mcs
+rem       -> program the on-board QSPI flash with that .mcs
+rem
+rem Default files (produced by build_bitstream.bat):
+rem   .bit -> build\LBTiny\LBTiny.runs\impl_1\lbtiny_top.bit
+rem   .mcs -> build\LBTiny\LBTiny.runs\impl_1\lbtiny_top.mcs
 rem ============================================================
 
 cd /d "%~dp0"
 
-if "%~1"=="" (
-    set "BITFILE=build\LBTiny\LBTiny.runs\impl_1\lbtiny_top.bit"
-) else (
-    set "BITFILE=%~1"
+rem -------- arg parsing --------
+rem Walks up to two positional args. Either can be the "persistent" flag
+rem or a path to a .bit / .mcs file. Order does not matter.
+set "PROG_FILE="
+set "PERSISTENT=0"
+
+call :parse_arg "%~1"
+if errorlevel 1 exit /b 1
+call :parse_arg "%~2"
+if errorlevel 1 exit /b 1
+
+rem If user passed an .mcs path, persistent mode is implied.
+if defined PROG_FILE (
+    if /I "!PROG_FILE:~-4!"==".mcs" set "PERSISTENT=1"
 )
 
-if not exist "%BITFILE%" (
-    echo ERROR: bitstream not found:
-    echo   %BITFILE%
+rem Fill in default file if none was given.
+if not defined PROG_FILE (
+    if "%PERSISTENT%"=="1" (
+        set "PROG_FILE=build\LBTiny\LBTiny.runs\impl_1\lbtiny_top.mcs"
+    ) else (
+        set "PROG_FILE=build\LBTiny\LBTiny.runs\impl_1\lbtiny_top.bit"
+    )
+)
+
+if not exist "%PROG_FILE%" (
+    echo ERROR: programming file not found:
+    echo   %PROG_FILE%
     echo.
-    echo Build it first with:
-    echo   build_bitstream.bat
+    if "%PERSISTENT%"=="1" (
+        echo Build it first with:
+        echo   build_bitstream.bat persistent
+    ) else (
+        echo Build it first with:
+        echo   build_bitstream.bat
+    )
     exit /b 1
 )
+
+if "%PERSISTENT%"=="1" (
+    set "TCL_PERSIST_ARG=persistent"
+) else (
+    set "TCL_PERSIST_ARG="
+)
+
+goto :after_args
+
+:parse_arg
+if "%~1"=="" goto :eof
+if /I "%~1"=="persistent" (
+    set "PERSISTENT=1"
+    goto :eof
+)
+rem Anything else is treated as a file path.
+if defined PROG_FILE (
+    echo ERROR: too many file paths given. Only one .bit or .mcs may be passed.
+    exit /b 1
+)
+set "PROG_FILE=%~1"
+goto :eof
+
+:after_args
 
 if not exist "program_bitstream.tcl" (
     echo ERROR: program_bitstream.tcl not found in project root.
@@ -82,12 +143,17 @@ exit /b 1
 
 :vivado_found
 echo Using Vivado from PATH.
-echo Bitstream: %BITFILE%
+echo Programming file: %PROG_FILE%
+if "%PERSISTENT%"=="1" (
+    echo Target: on-board QSPI flash (persistent across power cycles^)
+) else (
+    echo Target: FPGA SRAM via JTAG (volatile - lost on power cycle^)
+)
 echo.
 echo Make sure the Nexys A7 is powered on and connected through the PROG USB-JTAG port.
 echo.
 
-call vivado -mode batch -log "build\program_bitstream.log" -journal "build\program_bitstream.jou" -source program_bitstream.tcl -tclargs "%BITFILE%"
+call vivado -mode batch -log "build\program_bitstream.log" -journal "build\program_bitstream.jou" -source program_bitstream.tcl -tclargs "%PROG_FILE%" %TCL_PERSIST_ARG%
 if errorlevel 1 (
     echo.
     echo ERROR: FPGA programming failed.
@@ -96,5 +162,13 @@ if errorlevel 1 (
 )
 
 echo.
-echo FPGA programming complete.
+if "%PERSISTENT%"=="1" (
+    echo QSPI flash programming complete.
+    echo.
+    echo To boot the design from flash:
+    echo   1. Set the JP1 mode jumper to QSPI.
+    echo   2. Power-cycle the board, or press the red PROG button.
+) else (
+    echo FPGA programming complete.
+)
 exit /b 0
