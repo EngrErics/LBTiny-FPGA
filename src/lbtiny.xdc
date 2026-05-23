@@ -138,3 +138,7 @@ set_property -dict { PACKAGE_PIN H16 IOSTANDARD LVCMOS33 } [get_ports { JB_AD_HI
 ## -------------------------------------------------------------------------
 set_property CFGBVS VCCO        [current_design]
 set_property CONFIG_VOLTAGE 3.3 [current_design]
+
+## QSPI flash boot support (for persistent programming via program_bitstream.bat -persist)
+set_property BITSTREAM.CONFIG.SPI_BUSWIDTH 4 [current_design]
+set_property CONFIG_MODE SPIx4               [current_design]
