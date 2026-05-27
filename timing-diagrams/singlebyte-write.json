@@ -1,0 +1,20 @@
+{ "signal": [
+  { "name": "clk",      "wave": "p...... " },
+  { "name": "Bus Phase","wave": "x234567", "data": ["T1", "T2", "T3", "T4", "T5", "T6"] },
+  { "name": "A[11:8]", "wave": "x2.....", "data": ["0x1"] },
+  { "name": "AD[7:0]", "wave": "x2.3..z", "data": ["0x23", "0xBB"] },
+  { "name": "ALE",     "wave": "010...." },
+  { "name": "ADDR_LAT","wave": "x.2....", "data": ["0x23"] },
+  { "name": "RD_n",    "wave": "1......" },
+  { "name": "WR_n", "wave": "1...01." }
+],
+  "config": { "hscale": 2 },
+  "head": {
+     "text": "6-Cycle Bus Write: Addr 0x123, Data 0xBB",
+     "tick": 0
+  },
+  "foot": {
+     "text": "Write commits on the rising edge of WR_n (T5→T6 transition); AD released in T6",
+     "tock": 6
+  }
+}
