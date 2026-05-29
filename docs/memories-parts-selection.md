@@ -13,3 +13,10 @@ AS6C6264-55SIN
 2.7v-5.5v 55ns access time
 normally in stock 1196 available
 https://www.digikey.com/en/products/detail/alliance-memory-inc/AS6C6264-55SIN/4234597
+
+
+Latch
+SN74LVC573ADWR 20-SOIC
+1.65v-3.6v
+normally in stock 7348 available
+https://www.digikey.com/en/products/detail/texas-instruments/SN74LVC573ADWR/562967
