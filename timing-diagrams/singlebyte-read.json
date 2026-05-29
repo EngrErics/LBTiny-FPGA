@@ -1,18 +1,18 @@
 { "signal": [
   { "name": "clk",     "wave": "p......" },
-  { "name": "Bus Phase","wave": "x234567", "data": ["T1", "T2", "T3", "T4", "T5", "T0-Idle"] },
+  { "name": "Bus Phase","wave": "7234567", "data": ["T0-Idle","T1", "T2", "T3", "T4", "T5", "T0-Idle"] },
   { "name": "A[11:8]", "wave": "x2.....", "data": ["0x1"] },
   { "name": "AD[7:0]", "wave": "x2.z4.z", "data": ["0x23", "0xA5"] },
   { "name": "ACC/MDR/IR[7:0]", "wave": "xxxxx2.", "data": ["0xA5"] },
   { "name": "ACC/MDR/IR_load", "wave": "0...10."},
   { "name": "ALE",     "wave": "010...." },
-  { "name": "ADDR_LAT","wave": "x.2....", "data": ["0x23"] },
+  { "name": "ADDR_LAT[7:0]","wave": "x.2....", "data": ["0x23"] },
   { "name": "RD_n",    "wave": "1...0.1" },
   { "name": "WR_n",    "wave": "1......" }
 ],
   "config": { "hscale": 2 },
   "head": {
-     "text": "6-Cycle CPU Bus Read: Addr 0x123, Data 0xAA",
+     "text": "6-Cycle CPU Bus Read: Addr 0x123, Data 0xA5",
      "tick": 0
    },
   "foot": {
