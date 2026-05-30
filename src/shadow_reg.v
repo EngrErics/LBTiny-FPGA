@@ -7,7 +7,7 @@ module shadow_reg #(parameter W = 8, DEFAULT = 0) (
     input wire backup,
     input wire restore,
     input wire CLK,
-    input wire RESET_n
+    input wire RESET_n,
     output reg [W-1:0] register
 );
 
