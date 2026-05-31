@@ -22,18 +22,20 @@ normally in stock 7348 available
 https://www.digikey.com/en/products/detail/texas-instruments/SN74LVC573ADWR/562967
 
 
+SN74LVC00 14-SOIC Quad 2-input NAND
+1.65v-3.6v 4.1ns
+normally in stock 929 available
+https://www.digikey.com/en/products/detail/texas-instruments/SN74LVC00ADT/1591657
+
+
+**DEPRECATED BELOW THIS LINE**
 Address Decoding
 SN74LVC138AD 16-SOIC SCRATCHING OUT THIS IDEA IN FAVOR OR QUAD NAND
 1.65v to 3.6v 5.8ns
 normally in stock 
 https://www.digikey.com/en/products/detail/texas-instruments/SN74LVC138AD/377423
 
-SN74LVC00 14-SOIC Quad 2-input NAND
-1.65v-3.6v 4.1ns
-normally in stock 929 available
-https://www.digikey.com/en/products/detail/texas-instruments/SN74LVC00ADT/1591657
-
-Address Decoding
+Address Decoding (See PDF Explanation)
 y = nand(A[11],A[10]), z = nand(y,y), ROM CE = z
 w = nand(A[9],A[8]), RAM CE = nand(w,z)
 We are reusing Z so that we only end up with 4 2-input NAND Gates
