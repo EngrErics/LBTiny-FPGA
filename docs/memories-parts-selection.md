@@ -28,6 +28,8 @@ normally in stock 929 available
 https://www.digikey.com/en/products/detail/texas-instruments/SN74LVC00ADT/1591657
 
 
+2 Choices for Bus Switch 20ch SN74CBTLV16210DLR or SN74CBTLV3245A
+I'm currently doing the SN74CBTLV3245A
 SN74CBTLV3245A LOW-VOLTAGE OCTAL FET BUS SWITCH
 https://www.digikey.com/en/products/detail/texas-instruments/SN74CBTLV3245ADW/277190
 
