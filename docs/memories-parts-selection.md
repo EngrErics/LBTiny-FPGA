@@ -28,6 +28,10 @@ normally in stock 929 available
 https://www.digikey.com/en/products/detail/texas-instruments/SN74LVC00ADT/1591657
 
 
+SN74CBTLV3245A LOW-VOLTAGE OCTAL FET BUS SWITCH
+https://www.digikey.com/en/products/detail/texas-instruments/SN74CBTLV3245ADW/277190
+
+
 **DEPRECATED BELOW THIS LINE**
 Address Decoding
 SN74LVC138AD 16-SOIC SCRATCHING OUT THIS IDEA IN FAVOR OR QUAD NAND
