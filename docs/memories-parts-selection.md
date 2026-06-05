@@ -33,6 +33,13 @@ I'm currently doing the SN74CBTLV3245A
 SN74CBTLV3245A LOW-VOLTAGE OCTAL FET BUS SWITCH
 https://www.digikey.com/en/products/detail/texas-instruments/SN74CBTLV3245ADW/277190
 
+SN74HC595DR 8-Bit Shift Registers With 3-State Output Registers
+in stock 70000
+https://www.digikey.com/en/products/detail/texas-instruments/SN74HC595DR/562919
+
+single inverter
+https://www.digikey.com/en/products/detail/texas-instruments/SN74AHC1G04DBVR/276733
+
 
 **DEPRECATED BELOW THIS LINE**
 Address Decoding
